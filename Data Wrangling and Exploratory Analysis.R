@@ -1,26 +1,47 @@
-# PREPARATION
+# DATA WRANGLING
 
 # Import packages and files
 library(dplyr)
 library(tidyr)
 library(ggplot2)
-water2017 <- read.csv("2017.csv")
+water2017 <- read.csv("2017.csv", stringsAsFactors = F)
 
-# Remove unnecessary columns to improve processing speed. "X.id" and "sample.samplingPoint" are not useful because their values are URLs and will therefore be removed. "codedResultInterpretation.interpretation" are not useful because the entire column is empty.
+# Remove unnecessary columns to improve processing speed. "X.id" and "sample.samplingPoint" are not useful because their values are URLs and will therefore be removed. "codedResultInterpretation.interpretation" are not useful because the entire column is empty. "sample.samplingPoint.label" is removed because the names of the locations have too many levels to make any meaningful analysis."determinand.notation" is removed because it's redundant information: it's a numeric code assigned to each type of determinand, which is already given unique names in "determinand.label".
+
 water2017$X.id <- NULL
 water2017$sample.samplingPoint <- NULL
 water2017$codedResultInterpretation.interpretation <- NULL
+water2017$sample.samplingPoint.notation <- NULL
+water2017$sample.samplingPoint.label <- NULL
+water2017$determinand.notation <- NULL
 
-# Convert sample.sampleDateTime to POSIXct format
-water2017$sample.sampleDateTime <- as.POSIXct(water2017$sample.sampleDateTime, format = "%Y-%m-%dT%H:%M:%S")
+# Renaming columns  
+colnames(water2017) <- c("time", "determinand.label", "determinand.definition", "resultqualifier", "result", "resultunit", "materialtype", "compliance", "purpose", "easting", "northing")
+
+# Convert time to POSIXct format
+water2017$time <- as.POSIXct(water2017$time, format = "%Y-%m-%dT%H:%M:%S")
+
+# Conversion to factors [might not be advantageous]
+water2017$determinand.label <- as.factor(water2017$determinand.label)
+water2017$determinand.definition <- as.factor(water2017$determinand.definition)
+water2017$materialtype <- as.factor(water2017$materialtype)
+water2017$compliance <- as.factor(water2017$compliance)
+
+# Focusing data to only the 25 most frequently tested determinands. Set others to NULL. Combine other years to this dataset. Use grepl(commonnames) to return logical vector, add together and if greater than 1 than there's a true; keep that row. lapply(grepl)
+commondeterminandsnames <- as.factor(names(head(sort(table(water2017$determinand.label), decreasing = T), 10)))
+water2017cut <- filter(water2017, match(water2017$determinand.label, commondeterminandsnames) > 0)
+
+# Remove outliers from each determinand, defined as values that are more than 2 standard deviations away from the mean. This is to allow scaling of axes of plots that better visualize trends. Create a for loop: filter by commondeterminandsnames, then filter according to a 2*sd margin. These are recombined as water2017cleaned.
+for (x in 1:length(commondeterminandsnames)) {
+  assign(paste("i", x, sep = "-"), filter(water2017cut, water2017cut$determinand.label == commondeterminandsnames[x]))
+  assign(paste("j", x, sep = "-"), filter(paste("i", x, sep = "-"), paste("i", x, sep = "-")$result > mean(paste("i", x, sep = "-")) - 2*sd(paste("i", x, sep = "-")) & water2017cut$result < mean(paste("i", x, sep = "-")) + 2*sd(paste("i", x, sep = "-"))))
+water2017cleaned <- rbind(water2017cleaned, paste("j", x, sep = "-"))
+}
+
 
 # ORGANIZING THE DATASET BY TYPE OF TEST CONDUCTED
 
-# Identifying the most frequently occuring determinand.label values
-sorted.determinand.labels <- sort(table(water2017$determinand.label), decreasing = T)
-head(sorted.determinand.labels, 10)
-
-# Creating new data frames based on the type of test performed, identified by the column "determinand.label" (just the 10 most frequent cases).Note: not sure if this is necessary.
+# Creating new data frames based on the type of test performed, identified by the column "determinand.label" (just the 10 most frequent cases).Note: not sure if this is necessary. This filtering function can be done in a loop: filtering through the 10 most common levels. Use a for loop to cycle through each element of a vector.
 BOD.ATU <- filter(water2017, water2017$determinand.label == "BOD ATU")
 Ammonia <- filter(water2017, water2017$determinand.label == "Ammonia(N)")
 Sld.Sus.105C <- filter(water2017, water2017$determinand.label == "Sld Sus@105C")
@@ -36,7 +57,7 @@ O.Diss.sat <- filter(water2017, water2017$determinand.label == "O Diss %sat")
 
 # Compare relationship between test results and time.
 
-# Creating function for plotting each test type's results WRT time.
+# Creating function for plotting each test type's results WRT time. Place all levels into a vector. Filter dataframe
 plot.time <- function(x) {
   ggplot(x, aes(x = sample.sampleDateTime, y = result)) +
     geom_point(alpha = 0.1) +
