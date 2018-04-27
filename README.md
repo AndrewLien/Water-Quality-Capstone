@@ -29,3 +29,6 @@ This project will yield a correlation between time and BOD levels in water and p
 - BOD can also be plotted over time per type of location (underground water, treated water, sewage water, etc. or running water vs. standing water)... this is worth checking during exploratory analysis. Use ggplot2 to visualize this.
 - I can extend that to extend this past only monitoring BOD to monitoring the other chemical reports: pH, Nitrates, etc.
 
+# Additional Files
+
+- The cleaned data set can be downloaded [here] (https://drive.google.com/drive/folders/1CD8-oHrF6VQyjEdSL8v6PSWbstwB0T08).
