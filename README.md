@@ -10,7 +10,7 @@ To minimize public exposure to chemical additives while adding enough to neutral
 
 ## Approach
 
-This project aims to use data from the [UK Environment Agency] (http://environment.data.gov.uk/water-quality/view/landing) to search for patterns in the [BOD] (https://en.wikipedia.org/wiki/Biochemical_oxygen_demand) as a function of the changing seasons, using data from 2017 as a case study to compensate for the large size of the data sets.
+This project aims to use data from the [UK Environment Agency](http://environment.data.gov.uk/water-quality/view/landing) to search for patterns in the [BOD](https://en.wikipedia.org/wiki/Biochemical_oxygen_demand) as a function of the changing seasons, using data from 2017 as a case study to compensate for the large size of the data sets.
 
 After using the dplyr and tidyr packages to organize the raw data. All the results are stored within the same column, with the type of test the result is for on a separate column. The functions gather() and separate() will need to be used to reorganize the data into a tidy format such that the results for "BOD ATU" and "TIME/DATE" are isolated. Then ggplot2 will be used to plot the the change in BOD against the time each sample was taken. 
 
@@ -20,8 +20,8 @@ This project will yield a correlation between time and BOD levels in water and p
 
 ## Similar work done
 
-- [Seasonal variations in the risk of gastrointestinal illness on a tropical recreational beach] (https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4271456/): This work used membrane filtration and culture methods on water samples to screen for bacterial concentration. This study demonstrated that seasons and bacterial concentration are correlated.
-- [Factors and Mechanisms Affecting Seasonal Changes in the Prevalence of Microbiological Indicators of Water Quality and Nutrient Concentrations in Waters of the Białka River Catchment, Southern Poland] (https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4975758/): This study also demonstrated that seasons had a direct correlation with bacterial concentrations in water, using both membrane filtration method and ion chromatography.
+- [Seasonal variations in the risk of gastrointestinal illness on a tropical recreational beach](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4271456/): This work used membrane filtration and culture methods on water samples to screen for bacterial concentration. This study demonstrated that seasons and bacterial concentration are correlated.
+- [Factors and Mechanisms Affecting Seasonal Changes in the Prevalence of Microbiological Indicators of Water Quality and Nutrient Concentrations in Waters of the Białka River Catchment, Southern Poland](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4975758/): This study also demonstrated that seasons had a direct correlation with bacterial concentrations in water, using both membrane filtration method and ion chromatography.
 
 # Notes
 
@@ -31,4 +31,4 @@ This project will yield a correlation between time and BOD levels in water and p
 
 # Additional Files
 
-- The cleaned data set can be downloaded [here] (https://drive.google.com/drive/folders/1CD8-oHrF6VQyjEdSL8v6PSWbstwB0T08?usp=sharing).
+- The cleaned data set can be downloaded [here](https://drive.google.com/drive/folders/1CD8-oHrF6VQyjEdSL8v6PSWbstwB0T08?usp=sharing).
