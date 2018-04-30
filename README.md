@@ -25,9 +25,10 @@ This project will yield a correlation between time and BOD levels in water and p
 
 # Notes
 
-- The trend that bacterial concentration increases in summertime and decreases in the winter has already been demonstrated. How can this dataset be used to 
+- The trend that bacterial concentration increases in summertime and decreases in the winter has already been demonstrated. How can this dataset be used to gather new insights?
 - BOD can also be plotted over time per type of location (underground water, treated water, sewage water, etc. or running water vs. standing water)... this is worth checking during exploratory analysis. Use ggplot2 to visualize this.
 - I can extend that to extend this past only monitoring BOD to monitoring the other chemical reports: pH, Nitrates, etc.
+- Try predicting the chance that BOD ATU or Ammonia will be an outlier based on time, pH, and water temperature
 
 # Additional Files
 
