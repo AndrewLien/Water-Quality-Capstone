@@ -1,0 +1,21 @@
+## Wrangling Process
+
+One of the challenges of wrangling this dataset was its sheer size, at 545 MB for just the data from the year 2017. To reduce the filesize, unecessary columns were deleted that contained information that wasn't useful. The remaining columns were renamed for simplification. 
+
+The time column had to be convered to a POSIXct format and shorted to include only the time units of interest, year, month, and day, leaving out hors, minutes, and seconds. The smaller increments of time were not of interest in this study and were excluded to minimize file size. Likewise, only the last 10 characters of X.id were needed as unique identifiers for each row, so the other characters were excluded.
+
+In order to analyse the data set based on the determinands performed, the data set was filtered to include only the 10 most frequently occuring determinands. 
+
+At this point, every test's result was stored in the column "result," while the type of determinand conducted for that result was stored in the colmn determinand.label. This made it extremely difficult to plot determinands against each other, because all determinands were in the same column. To make the data tidy, the dataset was spread using the dplyr package. This allowed for easy plotting of time versus the result of each determinand invdividually.Each determinand result column was renamed to include the determinand's result unit.
+
+It was still difficult to plot each determinand against the results of another because each result was stored on a separate row. To plot a result against another, they had to be on the same row. In order to plot determinand results against each other for those that shared the same time stamp, rows with similar column values in time, sample material type, copmliance, easting, and northing were merged with the function coalesce(). This collected results for the same sample into the same row.
+
+The cleaned data can be found [here](https://drive.google.com/drive/folders/1CD8-oHrF6VQyjEdSL8v6PSWbstwB0T08).
+
+## Notes
+
+Given greater processing power, this process could be completed with more years of data and with more determinands; this project demonstrates the viability of the process and its ability to reveal patterns in the data that are difficult to detect.
+
+
+
+
