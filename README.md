@@ -2,11 +2,11 @@
 
 ## Background
 
-Bathing or swimming in bodies of water that have significant e. coli levels can pose a health risk. E. coli is often tested for at beaches with a biological assay that can take some time to yield results. 
+Bathing or swimming in bodies of water that have significant e. coli levels pose a health risk. E. coli is often tested with a biological assay that can take some time to yield results. 
 
 ## Proposal
 
-To get advance warning of risks of high e. coli levels as fast as possible, alternative tests that can yield results faster can be used to predict high e. coli levels.
+To get advance warning of risks of high e. coli levels more quickly, alternative chemical tests that can yield results faster can be used to predict high e. coli levels.
 
 ## Approach
 
@@ -20,7 +20,7 @@ This project will yield a predictive model that can anticipate high e. coli conc
 
 # Project Files
 
-Due to upload file size limitations on Github, files are stored on a [Google Drive folder.] ((https://drive.google.com/drive/folders/1CD8-oHrF6VQyjEdSL8v6PSWbstwB0T08?usp=sharing)
+Due to upload file size limitations on Github, data files are stored on a [Google Drive folder.] (https://drive.google.com/drive/folders/1CD8-oHrF6VQyjEdSL8v6PSWbstwB0T08?usp=sharing)
 
 - "ecoli.script.R" is the script used to wrangle and explore the data
     - Section 1 (lines 1-31): GENERAL SETUP. This shows data wrangling from the original files pulled from the UK Environmental Agency.
