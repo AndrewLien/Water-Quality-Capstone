@@ -16,7 +16,7 @@ After using the dplyr and tidyr packages to organize the raw data. All the resul
 
 ## Deliverables
 
-This project will yield a predictive model that can anticipate high e. coli concentrttions within a certain confidence level.
+This project will yield a predictive model that can anticipate high e. coli concentrations within a certain confidence level.
 
 # Project Files
 
