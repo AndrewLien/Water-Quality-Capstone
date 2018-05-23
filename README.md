@@ -20,12 +20,10 @@ This project will yield a predictive model that can anticipate high e. coli conc
 
 # Project Files
 
-Due to upload file size limitations on Github, data files are stored on a [Google Drive folder.] (https://drive.google.com/drive/folders/1CD8-oHrF6VQyjEdSL8v6PSWbstwB0T08?usp=sharing)
-
 - "ecoli.script.R" is the script used to wrangle and explore the data
     - Section 1 (lines 1-31): GENERAL SETUP. This shows data wrangling from the original files pulled from the UK Environmental Agency.
     - Section 2 (lines 32-77): FILTERING AND TIDYING. This shows how the combined raw data was filtered for determinands of interest and converted into tidy format.
     - Section 3 (lines 78-129): EXPLORATORY ANALYSIS 1. Relationships between e. coli concentrations and each parameter aren't linear and require an alternative approach to predictive modeling.
     - Section 4 (lines 130- ongoing): TRANSFORMING DATA INTO BINARIES
-- "water.raw.csv" is a combination of all data from 2013-2017 with unnecessary rows removed. This is created and processed in Section 1.
+- "water.raw.csv" is a combination of all data from 2013-2017 with unnecessary rows removed. This is created and processed in Section 1. Due to upload file size limitations on Github, datafiles are stored on a [Google Drive folder.] (https://drive.google.com/drive/folders/1CD8-oHrF6VQyjEdSL8v6PSWbstwB0T08?usp=sharing)
 - "water.raw.ecoli" is a data frame with extraneous material types and determinands removed. This is derived from "water.raw.csv" and wrangled in Section 2.
