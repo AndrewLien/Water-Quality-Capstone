@@ -1,0 +1,175 @@
+---
+title: "1-filtering-and-tidying"
+author: "Andrew Lien"
+date: "June 12, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r include = F, echo = F, message = F}
+## Import packages
+library(dplyr)
+library(tidyr)
+library(magrittr)
+library(ggplot2)
+library(scales)
+library(RColorBrewer)
+```
+
+## Data Filtration (First Attempt)
+
+Import the raw data set, "water.raw" and view the most frequently tested material types in the data set.
+```{r}
+water.raw <- read.csv("water.raw.csv", stringsAsFactors = F)
+table(water.raw$materialtype) %>% sort(decreasing = T) %>% head(10)
+```
+
+Two filters are applied here:
+
+1. The material types "RIVER / RUNNING SURFACE WATER", "SEA WATER", "ESTUARINE WATER", and "POND / LAKE / RESERVOIR WATER" are filtered for. These are the top 5 most frequently tested material types, minus the second most commonly tested material type, "FINAL SEWAGE EFFLUENT". That material type is not of interest because a) no one will be swimming in it and b) it's not as related to the other common material types.
+2. The most commonly performed and significant determinands are selected.
+
+```{r results = "hide"}
+water.ecoli <- filter(water.raw, water.raw$materialtype == "RIVER / RUNNING SURFACE WATER" | water.raw$materialtype == "SEA WATER" | water.raw$materialtype == "ESTUARINE WATER" | water.raw$materialtype == "POND / LAKE / RESERVOIR WATER")
+water.ecoli$materialtype %<>% as.factor()
+commondeterminands <- table(water.ecoli$determinand.label) %>% sort(decreasing = T) %>% names() %>% head(21)
+additionaldeterminands <- c("Bathers 100m", "Beach Users")
+water.ecoli <- filter(water.ecoli, match(water.ecoli$determinand.label, commondeterminands) > 0 | match(water.ecoli$determinand.label, additionaldeterminands) > 0)
+```
+
+## Exploration: Material Type Composition (First Attempt)
+
+Though similar determinands are performed on each material type, each material type has a different frequency of each determinand performed on them, suggesting which determinands are the most important for each material type.
+
+A table of testing frequencies for each determinand is first generated.
+
+```{r}
+rivercomponents <- table(filter(water.ecoli, water.ecoli$materialtype == "RIVER / RUNNING SURFACE WATER")$determinand.label)
+seacomponents <- c(0, table(filter(water.ecoli, water.ecoli$materialtype == "SEA WATER")$determinand.label))
+estuarycomponents <- c(0, table(filter(water.ecoli, water.ecoli$materialtype == "ESTUARINE WATER")$determinand.label))
+lakecomponents <- table(filter(water.ecoli, water.ecoli$materialtype == "POND / LAKE / RESERVOIR WATER")$determinand.label)
+componentstable <- as.data.frame(cbind(seacomponents, estuarycomponents, rivercomponents, lakecomponents))
+rownames(componentstable) <- rownames(rivercomponents)
+componentstable
+```
+
+This table is then converted to a tidy format and visualized.
+
+```{r}
+componentstable <- sweep(componentstable, MARGIN = 2, FUN = "/", STATS = colSums(componentstable))
+componentstable <- cbind(row.names(componentstable), componentstable)
+colnames(componentstable)[1] <- "determinand"
+componentstable <- gather(componentstable, key = "materialtype", value = "percent of tests", 2:5)
+componentstable$materialtype %<>% as.factor()
+componentstable %<>% arrange(`percent of tests`)
+ggplot(componentstable, aes(x = materialtype, y = `percent of tests`, fill = determinand)) + 
+  geom_bar(position = "fill", stat = "identity") + 
+  scale_fill_manual(values = colorRampPalette(brewer.pal(9, "Set1"))(length(unique(componentstable$determinand)))) + 
+  scale_y_continuous(label = percent) + 
+  ggtitle("How often is each determinand tested for each material type?")
+```
+
+## Spread and Aggregate Data (First Attempt)
+
+To compare each day's results for each sample, the data set needs to be spread and aggregated.
+
+```{r eval = F}
+water.ecoli$id <- 1:nrow(water.ecoli)
+water.ecoli <- spread(water.ecoli, key = determinand.label, value = result)
+```
+
+This results in a file size too large to process, so the most significant determinands are retained in the dataset, as determined by a combination of the frequency bar graph above and scientific literature:
+
+- Copper tends to inhibit e. coli growth [1](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4249004/) [2](https://www.ncbi.nlm.nih.gov/pubmed/27280608)
+- Dissolved iron tends to promote e. coli growth [3](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC1214678/) [4](https://onlinelibrary.wiley.com/doi/pdf/10.1111/j.1472-765X.2006.01895.x)
+- Cadmium inhibits e. coli growth, while zinc has little effect [5](https://www.ncbi.nlm.nih.gov/pubmed/1795651)
+- pH, temperature, and dissolved oxygen affect e. coli growth [6](http://www.gatewaycoalition.org/files/hidden/react/ch4/4_4f.htm) [7](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC3605374/)
+- High levels of ammonium can be toxic to bacteria [7](https://link.springer.com/article/10.1007%2Fs00284-005-0370-x)
+- Higher phosphorus concentrations prolong the survival of e. coli [8](http://aem.asm.org/content/73/11/3755.full)
+- E. coli rely on reducing nitrate to ammonia when there's a lack of oxygen [9](https://www.ncbi.nlm.nih.gov/pubmed/8919448)
+
+Parameters that either were infrequently tested or had little literature supporting a relationship to e. coli were omitted to make the file small enough to be handled with the function spread().
+
+## Data Filtration (Second Attempt)
+
+The original file, "water.raw", is refiltered according to the new determinand selection parameters.
+
+```{r}
+water.ecoli <- filter(water.raw, water.raw$materialtype == "RIVER / RUNNING SURFACE WATER" | water.raw$materialtype == "SEA WATER" | water.raw$materialtype == "ESTUARINE WATER" | water.raw$materialtype == "POND / LAKE / RESERVOIR WATER")
+water.ecoli$materialtype %<>% as.factor()
+
+# New determinand selection criteria
+significantdeterminands <- c("Temp Water", "pH", "Nitrite-N", "Orthophospht", "O Diss %sat", "Nitrate-N", "Oxygen Diss", "E.coli C-MF", "SALinsitu", "Cu Filtered", "BOD ATU", "Cu Filtered", "Ni- Filtered", "Bathers 100m", "Beach Users")
+
+water.ecoli <- filter(water.ecoli, match(water.ecoli$determinand.label, significantdeterminands) > 0)
+```
+
+## Exploration: Material Type Composition (Second Attempt)
+
+```{r}
+rivercomponents <- table(filter(water.ecoli, water.ecoli$materialtype == "RIVER / RUNNING SURFACE WATER")$determinand.label)
+seacomponents <- c(table(filter(water.ecoli, water.ecoli$materialtype == "SEA WATER")$determinand.label))
+estuarycomponents <- c(table(filter(water.ecoli, water.ecoli$materialtype == "ESTUARINE WATER")$determinand.label))
+lakecomponents <- table(filter(water.ecoli, water.ecoli$materialtype == "POND / LAKE / RESERVOIR WATER")$determinand.label)
+componentstable <- as.data.frame(cbind(seacomponents, estuarycomponents, rivercomponents, lakecomponents))
+rownames(componentstable) <- rownames(rivercomponents)
+componentstable
+```
+
+Similar to the first attempt at exploring the material type composition,this table is converted to a tidy format and visualized.
+
+```{r}
+componentstable <- sweep(componentstable, MARGIN = 2, FUN = "/", STATS = colSums(componentstable))
+componentstable <- cbind(row.names(componentstable), componentstable)
+colnames(componentstable)[1] <- "determinand"
+componentstable <- gather(componentstable, key = "materialtype", value = "percent of tests", 2:5)
+componentstable$materialtype %<>% as.factor()
+componentstable %<>% arrange(`percent of tests`)
+ggplot(componentstable, aes(x = materialtype, y = `percent of tests`, fill = determinand)) + 
+  geom_bar(position = "fill", stat = "identity") + 
+  scale_fill_manual(values = colorRampPalette(brewer.pal(9, "Set1"))(length(unique(componentstable$determinand)))) + 
+  scale_y_continuous(label = percent) + 
+  ggtitle("How often is each determinand tested for each material type?")
+```
+
+As seen by this graph, each material type has different determinands frequently tested on it, so some material types will be better suited for answering specific questions and others will be ill-suited. The relationships between each of the determinands will be further explored in ecoli-Exploratory-Analysis.Rmd.
+
+## Spread and Aggregate (Second Attempt)
+
+With a smaller filesize, the spread() function succeeds, resulting in a manageable filesize of 425.6 MB. After applying aggregate() and selecting only observations that have a corresponding e. coli measurement, the finalized dataset is an easily manageble 14.8 MB. This dataset will be further explored in "2-exploratory-analysis.Rmd".
+
+```{r}
+# Spread according to the column "determinand.label" to get tidy data.
+water.ecoli$determinand.label %<>% as.factor()
+water.ecoli$resultunit %<>% as.factor()
+water.ecoli$id <- 1:nrow(water.ecoli)
+water.ecoli <- spread(water.ecoli, key = determinand.label, value = result)
+water.ecoli$id <- NULL
+          
+# Remove duplicate rows 
+water.ecoli <- unique(water.ecoli)
+
+# Adding resultunit to columnsames.
+for (i in 6:length(water.ecoli)) {
+  position <- grep(x = is.na(water.ecoli[,i]), pattern = FALSE)[1]
+  unit <- water.ecoli[position, "resultunit"]
+  colnames(water.ecoli)[i] <- paste(colnames(water.ecoli)[i], unit, sep = ".")
+}
+water.ecoli$resultunit <- NULL
+
+# Aggregate rows. 
+water.ecoli <- aggregate(water.ecoli[,5:length(water.ecoli)], water.ecoli[,1:4], FUN = sum, na.rm = T)
+water.ecoli[water.ecoli == 0] <- NA
+
+# Filter to rows that have value for e. coli
+water.ecoli <- filter(water.ecoli, is.na(water.ecoli$`E.coli C-MF.no/100ml`) == F)
+```
+
+Each observation is categorized as either having an e. coli measurement greater or less than the water quality limit of 900 no/100mL before exporting the file.
+```{r}
+water.ecoli$E.coli.C.MF.conform <- water.ecoli$`E.coli C-MF.no/100ml` < 900
+write.csv(x = water.ecoli, file = "water.ecoli.csv", row.names = F)
+```

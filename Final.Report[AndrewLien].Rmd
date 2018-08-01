@@ -1,0 +1,776 @@
+---
+title: "E. Coli Analysis and Prediction in UK Water Quality Data"
+author: "Andrew Lien"
+date: "July 23, 2018"
+output: 
+  html_document: 
+    toc: true
+    toc_depth: 4
+    number_sections: true
+    theme: united
+---
+
+```{r setup, include=FALSE}
+library("knitr")
+knitr::opts_chunk$set(echo = TRUE)
+```
+```{r include = F, message = F,echo = F}
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(magrittr)
+library(RColorBrewer)
+library(scales)
+library(binr)
+library(caTools)
+library(ROCR)
+library(effects)
+```
+
+\newpage
+
+# INTRODUCTION
+
+## Background
+
+Bathing or swimming in bodies of water that have significant e. coli levels pose a health risk. E. coli bacteria normally live in the intestines of healthy people, but there are some strains that can cause severe abdominal cramps, diarrhea, fever, and sometimes vomiting, such as [E. coli O157:H7](https://www.medicalnewstoday.com/articles/68511.php). Most people will recover within a week, but this can be life-threatening in infants and in people with weakened-immune systems.  
+
+  To minize the number of e. coli infections, warnings are issued by the UK Environment Agency when e. coli concentration is measured to be higher than a safe level of [900 cfu/100ml](https://environment.data.gov.uk/bwq/profiles/help-understanding-data.html). However, a limitation of this warning is that the [e. coli concentration test](https://www.epa.gov/sites/production/files/2015-08/documents/method_1604_2002.pdf) takes at least 24 hours to perform. This is due to the fact that most biological assays require time for organisms to incubate.
+
+## Proposal
+
+In order to improve the warning speed when there's an e. coli level too high, the conditions which are associated with high e. coli concentrations can be monitored and used as an advance warning. By observing the results of chemical tests for which results can be obtained faster, it's possible to build a model that can predict, within a certain accuracy, when e. coli levels will be unsafe for swimming or bathing.
+
+## Approach
+
+This project aims to use data from the [UK Environment Agency](http://environment.data.gov.uk/water-quality/view/landing) to search for correlations between the e. coli concentration and the results of various determinands, using data from 2013-2017.
+
+The raw data is organized into tidy format using tidyr and dplyr, such that different tests that have the same time, place, and material type are collapsed into the same observation. This data is then explored using ggplot2 to identify which variables are correlated to each other and which are most strongly correlated to e. coli levels. By identifying variables that have significant relationships to e. coli concentration, a logistical regression model is created to predict whether e. coli concentrations will be above or below safe levels.
+
+**Note that because this data is so large, the sections "COMBINING ANNUAL DATA" and "FILTERING AND TIDYING DATA" are run separately to generate the file "water.ecoli.csv". This file is loaded to this script instead of loading each individual year's data and wrangling them. This is a limitation that arises due to limited computing power. Nevertheless, each step of the wrangling process is still described.**
+
+## Deliverables
+
+The objective of this project is to develop a model that can predict, based on different test results, whether a given sample will have an e. coli concentration above safe levels, within a certain confidence level.
+
+
+
+# DATA WRANGLING
+
+Data from the [UK Environment Agency](http://environment.data.gov.uk/water-quality/view/landing) is imported and combined to make one large data set. Some irrelevant columns are removed and some of the remaining columns are renamed to make them simpler to refer to. The remaining columns are:
+
+- time
+- determinand.label
+- result
+- resultunit
+- materialtype 
+- easting
+- northing 
+
+```{r echo = F, eval = F}
+water2013 <- read.csv("2013.csv", stringsAsFactors = F)
+water2014 <- read.csv("2014.csv", stringsAsFactors = F)
+water2015 <- read.csv("2015.csv", stringsAsFactors = F)
+water2016 <- read.csv("2016.csv", stringsAsFactors = F)
+water2017 <- read.csv("2017.csv", stringsAsFactors = F)
+water.raw <- rbind(water2013, water2014, water2015, water2015, water2016, water2017)
+water.raw$sample.samplingPoint <- NULL
+water.raw$codedResultInterpretation.interpretation <- NULL
+water.raw$sample.samplingPoint.notation <- NULL
+water.raw$sample.samplingPoint.label <- NULL
+water.raw$determinand.notation <- NULL
+water.raw$determinand.definition <- NULL
+water.raw$resultQualifier.notation <- NULL
+water.raw$sample.purpose.label <- NULL
+water.raw$sample.isComplianceSample <- NULL
+water.raw$X.id <- NULL
+colnames(water.raw) <- c("time", "determinand.label", "result", "resultunit", "materialtype", "easting", "northing")
+```
+
+## Filtering by Material Type
+
+Because this dataset is large (> 13 GB), it's unfeasible to perform the functions spread() and aggregate(), which are necessary to clean and analyze the data. The scope of this project is narrowed down by limiting the number of material types and the number of determinands that are considered so that these functions can be used to tidy the data. Below are the 10 most frequently occuring material types in this data set.
+
+```{r echo = F, eval = F}
+water.raw <- read.csv("water.raw.csv", stringsAsFactors = F)
+table(water.raw$materialtype) %>% sort(decreasing = T) %>% head(10)
+```
+
+The top 4 material types "RIVER / RUNNING SURFACE WATER", "SEA WATER", "ESTUARINE WATER", and "POND / LAKE / RESERVOIR WATER" are filtered for, skipping over "FINAL SEWAGE EFFLUENT" because it's not a type of water that people will swim in.
+
+## Filtering by Determinand
+
+The second filter applied is generated by creating a list of the most significant determinands, chosen by a combination of high testing frequency and relevant literature on conditions that affect e. coli growth. The literature along with a short summary of their conclusions can be found below:
+
+- Copper tends to inhibit e. coli growth [1](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4249004/) [2](https://www.ncbi.nlm.nih.gov/pubmed/27280608)
+- Dissolved iron tends to promote e. coli growth [3](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC1214678/) [4](https://onlinelibrary.wiley.com/doi/pdf/10.1111/j.1472-765X.2006.01895.x)
+- Cadmium inhibits e. coli growth, while zinc has little effect [5](https://www.ncbi.nlm.nih.gov/pubmed/1795651)
+- pH, temperature, and dissolved oxygen affect e. coli growth [6](http://www.gatewaycoalition.org/files/hidden/react/ch4/4_4f.htm) [7](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC3605374/)
+- High levels of ammonium can be toxic to bacteria [7](https://link.springer.com/article/10.1007%2Fs00284-005-0370-x)
+- Higher phosphorus concentrations prolong the survival of e. coli [8](http://aem.asm.org/content/73/11/3755.full)
+- E. coli rely on reducing nitrate to ammonia when there's a lack of oxygen [9](https://www.ncbi.nlm.nih.gov/pubmed/8919448)
+
+The selected determinands are:
+
+- **Temp Water**: Temperature of the water
+- **pH**: Values closer to 1 indicate acidity and those closer to 14 indicate basicity. Neutral water has pH 7.
+- **Nitrite-N**: Concentration of nitrogen originating from nitrites.
+- **Orthophospht**: Concentration of orthophosphates.
+- **O Diss %sat**: Only so much oxygen can be dissolved in water before the water is saturated. This is a measure of the concentration of dissolved oxygen in the water sample as a percentage of that saturated level.
+- **Nitrate-N**: Concentration of nitrogen originating from nitrates.
+- **Oxygen Diss**: This is the absolute concentration of dissolved oxygen in the water.
+- **E.coli C-MF**: This is the concentration of e. coli bacteria found in the water sample.
+- **SALinsitu**: This is the salinity of sample. Salinity is the amont of salt dissolved in the sample.
+- **Cu Filtered**: This is the concentration of copper detected in the sample.
+- **BOD ATU**: This is a measure of the amount of oxygen required by aerobic biological organisms in water to break down organic material present in the water sample.
+- **Ni-Filtered**: This is the concentration of nickel detected in the sample.
+- **Bathers 100m**: This is the number of bathers per 100m of shoreline. 
+- **Beach Users**: This is the total number of beach users. 
+
+
+```{r echo = F, eval = F}
+water.ecoli <- filter(water.raw, water.raw$materialtype == "RIVER / RUNNING SURFACE WATER" | water.raw$materialtype == "SEA WATER" | water.raw$materialtype == "ESTUARINE WATER" | water.raw$materialtype == "POND / LAKE / RESERVOIR WATER")
+water.ecoli$materialtype %<>% as.factor()
+
+# New determinand selection criteria
+significantdeterminands <- c("Temp Water", "pH", "Nitrite-N", "Orthophospht", "O Diss %sat", "Nitrate-N", "Oxygen Diss", "E.coli C-MF", "SALinsitu", "Cu Filtered", "BOD ATU", "Cu Filtered", "Ni- Filtered", "Bathers 100m", "Beach Users")
+
+water.ecoli <- filter(water.ecoli, match(water.ecoli$determinand.label, significantdeterminands) > 0)
+```
+
+## Tidying
+
+With a smaller filesize, the spread() function succeeds, resulting in a manageable filesize of 425.6 MB. After applying aggregate() and selecting only observations that have a corresponding e. coli measurement, the finalized dataset is an easily manageble 14.8 MB. In preparation of creating a logistical regression model, an additional column is added to indicate whether a given observation has an e. coli measurement higher than considered safe, 900 cfu/100ml. The data wrangling is now complete and is saved and exported as "water.ecoli.csv".
+
+```{r echo = F, eval = F}
+# Spread according to the column "determinand.label" to get tidy data.
+water.ecoli$determinand.label %<>% as.factor()
+water.ecoli$resultunit %<>% as.factor()
+water.ecoli$id <- 1:nrow(water.ecoli)
+water.ecoli <- spread(water.ecoli, key = determinand.label, value = result)
+water.ecoli$id <- NULL
+          
+# Remove duplicate rows 
+water.ecoli <- unique(water.ecoli)
+
+# Adding resultunit to columnsames.
+for (i in 6:length(water.ecoli)) {
+  position <- grep(x = is.na(water.ecoli[,i]), pattern = FALSE)[1]
+  unit <- water.ecoli[position, "resultunit"]
+  colnames(water.ecoli)[i] <- paste(colnames(water.ecoli)[i], unit, sep = ".")
+}
+water.ecoli$resultunit <- NULL
+
+# Aggregate rows. 
+water.ecoli <- aggregate(water.ecoli[,5:length(water.ecoli)], water.ecoli[,1:4], FUN = sum, na.rm = T)
+water.ecoli[water.ecoli == 0] <- NA
+
+# Filter to rows that have value for e. coli
+water.ecoli <- filter(water.ecoli, is.na(water.ecoli$`E.coli C-MF.no/100ml`) == F)
+```
+
+Each observation is categorized as either having an e. coli measurement greater or less than the water quality limit before exporting the file.
+```{r, eval = F, echo = F}
+water.ecoli$E.coli.C.MF.conform <- water.ecoli$`E.coli C-MF.no/100ml` < 900
+write.csv(x = water.ecoli, file = "water.ecoli.csv", row.names = F)
+```
+
+# EXPLORATORY ANALYSIS
+
+```{r echo = F, message = F, include = F}
+water.ecoli <- read.csv("water.ecoli.csv", stringsAsFactors = F)
+water.ecoli$materialtype %<>% as.factor()
+water.ecoli$time %<>% as.POSIXct(format = "%Y-%m-%dT%H:%M:%S")
+```
+
+In order to better understand the data and how to best create a predictive model, the data must first be explored. This is done in a systematic manner, as outlined below:
+
+* Collinearity
+  + Correlation Matrix
+  + Investigating Correlated Variables
+  + Removing Correlated Variables
+* Testing Frequencies
+* Investigating Relationships to E. Coli
+* Investigating Relationships to Location
+* Investigating Relationships to Time
+
+## Collinearity
+
+### Correlation Matrix
+
+A correlation matrix shows correlation coefficients between each pair of variables in the dataset. Instead of having values ranging from -1 to +1, these values are converted to grayscale colors, ranging from white to black. White cells correspond to values close to -1 and black cells correspond to values close to +1. Having the correlation matrix converted to a heatmap makes it easier to see that some pairs of variables are highly correlated. 
+
+```{r echo = F, warning = F}
+cor.table <- cor(water.ecoli[,5:length(water.ecoli)], use = "pairwise.complete.obs")
+cor.table <- as.data.frame(cbind(rownames(cor.table), cor.table))
+cor.table <- gather(cor.table, key = "V2", value = "cor.value", 2:length(cor.table))
+cor.table$cor.value %<>% as.numeric()
+ggplot(cor.table, aes(x = V1, y = V2)) +
+  geom_tile(aes(fill = cor.value), color = "white") +
+  scale_fill_gradient(low = "white", high = "black") +
+  ggtitle("Correlation Heat Map") +
+  xlab("Determinand1") +
+  ylab("Determinand2") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+### Investigating Correlated Variables
+
+Variable pairs that showed a strong relationship in the correlation matrix heat map are plotted using the package ggplot2, revealing finer structures in the data. 
+
+#### Oxygen.Diss.mg.l and O.Diss..sat..
+
+```{r echo = F, warning = F}
+ggplot(water.ecoli, aes(x = Oxygen.Diss.mg.l, y = O.Diss..sat.., color = E.coli.C.MF.conform)) +
+  geom_point(alpha = 0.2) +
+  facet_wrap(~materialtype, scales = "free")
+```
+
+Both of these determinands are different measurement methods for the same physical property, dissolved oxygen in water, so it makes sense that they are strongly correlated. Only one needs to be kept, so "O.Diss..sat.." is removed.
+
+#### Oxygen.Diss.mg.l and Temp.Water.cel
+
+```{r echo = F, warning = F}
+ggplot(water.ecoli, aes(x = Temp.Water.cel, y = Oxygen.Diss.mg.l, color = E.coli.C.MF.conform)) +
+  geom_point(alpha = 0.2) +
+  facet_wrap(~materialtype, scales = "free")
+```
+
+This negative correlation makes sense, because the solubility of gas in liquid is known to decrease as the temperature of the liquid increases. Though they aren't perfectly negatively correlated, this suggests that it may be better to include only one of these two variables instead of both in a predictive model.
+
+#### SALinsitu.ppt and Cu.Filtered.ug.l
+
+
+```{r echo = F, warning = F}
+ggplot(water.ecoli, aes(x = SALinsitu.ppt, y = Cu.Filtered.ug.l, color = E.coli.C.MF.conform)) +
+  geom_point(alpha = 0.5) +
+  facet_wrap(~materialtype, scales = "free")
+```
+
+The positive correlation between copper concentration and salinity in estuarine water suggests that copper might be one of the main salt constituents in estuarine water. However, due to the low sample size of points relating copper and salinity, this correlation isn't statistically reliable.
+
+## Testing Frequencies
+
+Each of the determinands are tested with different frequencies based on material type. This is visualized below to better understand the differences between each material type.
+
+Some of the noticeable patterns are:
+
+* "Nitrate.N.mg.l", "Niteite.N.mg.l", and "Orthophosphtmg.l" are almost exlusively tested in the material type "RIVER/RUNNING SURFACE WATER." 
+* "SALinsitu.ppt", "O.Diss..sat..", "Oxygen.Diss.mg.l", "pH.phunits", "BOD.ATU.mg.l", and "Temp.Water.cel" are tested relatively evenly between the material types.
+
+```{r echo = F, message = F, warning = F}
+frequencytable <- aggregate(x = is.na(select(water.ecoli, c(5:18))) == F, by = select(water.ecoli, 2), FUN = sum)
+frequencytable <- t(frequencytable)
+colnames(frequencytable) <- frequencytable[1,]
+frequencytable <- as.data.frame(frequencytable[-1,])
+frequencytable <- cbind(rownames(frequencytable), frequencytable)
+colnames(frequencytable)[1] <- "determinand"
+frequencytable <- gather(frequencytable, key = "materialtype", value = "count", 2:5)
+frequencytable$materialtype %<>% as.factor()
+frequencytable$count %<>% as.numeric()
+
+ggplot(frequencytable, aes(x = materialtype, y = count, fill = determinand)) + 
+  geom_bar(position = "fill", stat = "identity") +
+  scale_fill_manual(values = colorRampPalette(brewer.pal(9, "Set1"))(length(unique(frequencytable$determinand)))) +
+  scale_y_continuous(label = percent) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+## Investigating Relationships to E. Coli
+
+Water Temperature, pH, and Dissolved Oxygen
+
+Plotting each of these variables against the count of observations that have e. coli concentrations above or below regulatory levels shows that each interval has different ratios of conformance to nonconformance, indicating that these variables have some impact on e. coli growth; however, these plots also reveal that there are fewer testing points at high and low values of each of these variables, making any logistical regression model based on these TRUE/FALSE frequencies less reliable at those regions.
+```{r echo = F, warning = F}
+# Water Temperature
+water.ecoli.Temp <- select(filter(water.ecoli, is.na(water.ecoli$Temp.Water.cel) == 0), c(1:4, "E.coli.C.MF.no.100ml", "Temp.Water.cel", "E.coli.C.MF.conform"))
+water.ecoli.Temp <- cbind(water.ecoli.Temp, cut(water.ecoli.Temp$Temp.Water.cel, 30))
+colnames(water.ecoli.Temp)[8] <- "bin"
+ggplot(water.ecoli.Temp, aes(x = bin)) +
+  geom_bar(aes(fill = factor(E.coli.C.MF.conform)), width = 0.9, stat = "count", position = "dodge") +
+  scale_color_discrete(name = "conforms", breaks = c(T, F), labels = c("True", "False")) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  facet_wrap(~ materialtype, scales = "free") +
+  ggtitle("E. Coli Conformance count and Water Temperature")
+
+# pH
+water.ecoli.pH <- select(filter(water.ecoli, is.na(water.ecoli$pH.phunits) == 0), c(1:4, "E.coli.C.MF.no.100ml", "pH.phunits", "E.coli.C.MF.conform"))
+water.ecoli.pH <- cbind(water.ecoli.pH, cut(water.ecoli.pH$pH.phunits, 30))
+colnames(water.ecoli.pH)[8] <- "bin"
+ggplot(water.ecoli.pH, aes(x = bin)) +
+  geom_bar(aes(fill = factor(E.coli.C.MF.conform)), width = 0.9, stat = "count", position = "dodge") +
+  scale_color_discrete(name = "conforms", breaks = c(T, F), labels = c("True", "False")) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  facet_wrap(~ materialtype, scales = "free") +
+  ggtitle("E. Coli Conformance count and pH")
+
+# Dissolved Oxygen
+water.ecoli.oxygen.diss <- select(filter(water.ecoli, is.na(water.ecoli$Oxygen.Diss.mg.l) == 0), c(1:4, "E.coli.C.MF.no.100ml", "Oxygen.Diss.mg.l", "E.coli.C.MF.conform"))
+water.ecoli.oxygen.diss <- cbind(water.ecoli.oxygen.diss, cut(water.ecoli.oxygen.diss$Oxygen.Diss.mg.l, 30))
+colnames(water.ecoli.oxygen.diss)[8] <- "bin"
+ggplot(water.ecoli.oxygen.diss, aes(x = bin)) +
+  geom_bar(aes(fill = factor(E.coli.C.MF.conform)), width = 0.9, stat = "count", position = "dodge") +
+  scale_color_discrete(name = "conforms", breaks = c(T, F), labels = c("True", "False")) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  facet_wrap(~ materialtype, scales = "free") +
+  ggtitle("E. Coli Conformance count and Dissolved Oxygen")
+```
+
+```{r eval = F, echo = F, warning = F}
+# These variables seemed to have little to no relationship with e. coli and will not be used to predict e. coli.
+ggplot(water.ecoli, aes(x = BOD.ATU.mg.l, y = E.coli.C.MF.no.100ml, color = E.coli.C.MF.conform)) +
+  geom_point(alpha = 0.2) +
+  facet_wrap(~materialtype, scale = "free")
+ggplot(water.ecoli, aes(x = Cu.Filtered.ug.l, y = E.coli.C.MF.no.100ml, color = E.coli.C.MF.conform)) +
+  geom_point(alpha = 0.2) +
+  facet_wrap(~materialtype, scale = "free")
+ggplot(water.ecoli, aes(x = Ni..Filtered.ug.l, y = E.coli.C.MF.no.100ml, color = E.coli.C.MF.conform)) +
+  geom_point(alpha = 0.2) +
+  facet_wrap(~materialtype, scale = "free")
+ggplot(water.ecoli, aes(x = Nitrate.N.mg.l, y = E.coli.C.MF.no.100ml, color = E.coli.C.MF.conform)) +
+  geom_point(alpha = 0.2) +
+  facet_wrap(~materialtype, scale = "free")
+ggplot(water.ecoli, aes(x = Orthophospht.mg.l, y = E.coli.C.MF.no.100ml, color = E.coli.C.MF.conform)) +
+  geom_point(alpha = 0.2) +
+  facet_wrap(~materialtype, scale = "free")
+ggplot(water.ecoli, aes(x = SALinsitu.ppt, y = E.coli.C.MF.no.100ml, color = E.coli.C.MF.conform)) +
+  geom_point(alpha = 0.2) +
+  facet_wrap(~materialtype, scale = "free")
+# Salinity... checking to see how the distribution breaks down between conform/non-conform.
+water.ecoli.sal <- select(filter(water.ecoli, is.na(water.ecoli$SALinsitu.ppt) == 0), c(1:4, "E.coli.C.MF.no.100ml", "SALinsitu.ppt", "E.coli.C.MF.conform"))
+water.ecoli.sal <- cbind(water.ecoli.sal, cut(water.ecoli.sal$SALinsitu.ppt, 30))
+colnames(water.ecoli.sal)[8] <- "bin"
+ggplot(water.ecoli.sal, aes(x = bin)) +
+  geom_bar(aes(fill = factor(E.coli.C.MF.conform)), width = 0.9, stat = "count", position = "dodge") +
+  scale_color_discrete(name = "conforms", breaks = c(T, F), labels = c("True", "False")) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  facet_wrap(~ materialtype, scales = "free") +
+  ggtitle("E. Coli Conformance count and Salinity")
+```
+
+## Investigating Relationships to Location
+
+As expected, most pond/river sampling locations are farther inland and all seawater samples are taken along the coast of the UK.
+
+```{r echo = F, warning = F}
+ggplot(water.ecoli, aes(x = easting, y = northing, color = materialtype)) +
+  geom_point(alpha = 0.3)
+```
+
+## Investigating Relationships to Time
+
+The relationship of Temp Water to time shows that seasons have an effects on the average water temperature. Because it is already shown that water samples with a lower amount of dissolved oxygen in them and that dissolved oxygen concentration and temperature have a negative correlation, it can be deduced that time of year indeed has an effect on e. coli growth. In the plot of Temp.Water.cel to time, it can be easily seen that the average water temperature decreases in the winter and increases in the summer. This is important information that can be used to improve the predictive model.
+
+```{r echo = F, warning = F}
+# Time and Water T
+ggplot(water.ecoli, aes(x = time, y = Temp.Water.cel, color = E.coli.C.MF.conform)) +
+  geom_point(alpha = 0.2)
+```
+
+# MODELING
+
+```{r echo = F, message = F, include = F}
+# Setup
+water.ecoli <- read.csv("water.ecoli.csv", stringsAsFactors = F)
+water.ecoli$materialtype %<>% as.factor()
+water.ecoli$time %<>% as.POSIXct(format = "%Y-%m-%dT%H:%M:%S")
+water.ecoli$O.Diss..sat.. <- NULL
+```
+
+## Setup
+
+With the dataset reorganized into tidy format and the major significant variables identified, a model can be constructed. This model will be a logistical regression that predicts whether a water sample will have an e. coli concentration greater than safe levels (900 units per 100 mL) with a certain percentage of accuracy, based on the values of a few other select variables. Some of these features are information that needs to be extracted from an existing variable before it can be a significant contributor to the model. 
+
+### Feature Engineering 
+
+The variables that can be engineered to yield new new information are time, pH, and water temperature.
+
+1. "time", which is a value, is converted into "seasons", which is a 4-level factor. This is done because in exploratory analysis, it was observed that several other variables, including water temperature and dissolved oxygen, oscillate according to the time of year the water sample is taken. 
+
+Season  | Month
+--------|----------------------------
+FALL    | September, October, November
+WINTER  | December, January, February
+SPRING  | March, April, May
+SUMMER  | June, July, August
+
+```{r echo = F}
+water.ecoli$season <- substr(water.ecoli$time, 6, 7)
+water.ecoli$season <- gsub(pattern = "09|10|11", replacement = "fall", x = water.ecoli$season)
+water.ecoli$season <- gsub(pattern = "12|01|02", replacement = "winter", x = water.ecoli$season)
+water.ecoli$season <- gsub(pattern = "03|04|05", replacement = "spring", x = water.ecoli$season)
+water.ecoli$season <- gsub(pattern = "06|07|08", replacement = "summer", x = water.ecoli$season)
+```
+
+2. "pH.phunits", which is a value, is converted into "pH.ecolirange", which is a logical statement, either TRUE or FALSE. It was observed in exploratory analysis that there tended to be a higher concentration of water samples that had an e. coli level exceeding the 900 no/100ml threshold around the mean. Because the pH exhibited a normal distibution pattern when plotted against e. coli concentration, the majority of water sample with non-conforming e. coli levels were centered around that mean. For that reason, water samples that have a pH close to the mean have a relatively higher chance of also having an e. coli level exceeding the threshold. The plot below shows that the majority of non-conforming e. ocli measurements are close to the mean of the group, forming a pattern that resembles a normal distribution. "pH.phunits" is divided into two groups: within mean +/- 2*sd of non-conforming samples or not within that range.
+
+```{r echo = F, warning = F}
+nonconform.pH <- filter(water.ecoli, is.na(water.ecoli$pH.phunits) == F & water.ecoli$E.coli.C.MF.conform == F)
+nonconform.pH.mean <- mean(nonconform.pH$pH.phunits)
+nonconform.pH.sd <- sd(nonconform.pH$pH.phunits)
+water.ecoli$pH.ecolirange <- ifelse(water.ecoli$pH.phunits < nonconform.pH.mean + 2*nonconform.pH.sd & water.ecoli$pH.phunits > nonconform.pH.mean - 2*nonconform.pH.sd, T, F)
+
+ggplot(water.ecoli, aes(x = pH.phunits,  y = E.coli.C.MF.no.100ml, color = E.coli.C.MF.conform)) + 
+  geom_point(alpha = 0.3) +
+  geom_vline(xintercept = nonconform.pH.mean + 2*nonconform.pH.sd) +
+  geom_vline(xintercept = nonconform.pH.mean - 2*nonconform.pH.sd) +
+  annotate("rect", xmin = nonconform.pH.mean - 2*nonconform.pH.sd, xmax = nonconform.pH.mean + 2*nonconform.pH.sd, ymin=0, ymax=Inf, fill = "green", alpha = 0.1)
+```
+
+3. "Temp.Water.cel", which is a value, is converted into "temp.ecolirange", which is a logical statement, either TRUE or FALSE. Siimlar to pH.phunits, Temp.Water.cel also exhibited a normal distribution pattern when plotted against e. coli concentration. However, because the distribution is slightly negatively skewed, the median is used as the central point of the distribution. Whether a given point is within 2 standard deviations of the median is assigned TRUE or FALSE. The plot below shows that the majority of non-conforming e. coli measurements are close to the mean of the group, forming a pattern that resembles a negatively skewed normal distribution. The median is used instead of mean because this is a negatively skewed normal distribution: the median is closer to the maximum of the arch of the normal distribution than the mean. 
+
+```{r echo = F, warning = F}
+nonconform.temp <- filter(water.ecoli, is.na(water.ecoli$Temp.Water.cel) == F & water.ecoli$E.coli.C.MF.conform == F)
+nonconform.temp.mean <- median(nonconform.temp$Temp.Water.cel)
+nonconform.temp.sd <- sd(nonconform.temp$Temp.Water.cel)
+water.ecoli$temp.ecolirange <- ifelse(water.ecoli$Temp.Water.cel < nonconform.temp.mean + 2*nonconform.temp.sd & water.ecoli$Temp.Water.cel > nonconform.temp.mean - 2*nonconform.temp.sd, T, F)
+
+ggplot(water.ecoli, aes(x = Temp.Water.cel,  y = E.coli.C.MF.no.100ml, color = E.coli.C.MF.conform)) +
+  geom_point(alpha = 0.3) +
+  geom_vline(xintercept = nonconform.temp.mean + 2*nonconform.temp.sd) +
+  geom_vline(xintercept = nonconform.temp.mean - 2*nonconform.temp.sd) +
+  annotate("rect", xmin = nonconform.temp.mean - 2*nonconform.temp.sd, xmax = nonconform.temp.mean + 2*nonconform.temp.sd, ymin=0, ymax=Inf, fill = "green", alpha = 0.1)
+```
+
+### Normalization
+
+Because many of the variables are in different units, the data needs to be normalized before a meaningful logistical regression model can be built. Each column has its column mean subtracted from each of its values before dividing them by the column's standard deviation, according to the formula for standard score normalization:
+
+<center>
+$Standard Score = \frac{x_i - Mean(x)}{Standard Deviation(x)}$
+</center>
+
+```{r echo = F}
+mean <- mapply(water.ecoli[,7:17], FUN = "mean", na.rm = T)
+stdev <- mapply(water.ecoli[,7:17], FUN = "sd", na.rm = T)
+water.ecoli[,7:17] %<>% sweep(., 2, FUN = "-", mean) %>% sweep(., 2, FUN = "/", stdev)
+```
+
+### Splitting the Dataset into Training and Testing sets
+
+The model will need a dataset to be trained but will also need a dataset to evalute its accuracy. To be able to tell whether this model is effective for other circumstances, for example, a different year of data, these two data sets should not be the same. In order to have a testing dataset that will be different from the training dataset, the original data set is split in half at random using the function sample.split().
+
+```{r echo = F}
+set.seed(123)
+split.labels <- sample.split(Y = water.ecoli[,1], SplitRatio = 1/2)
+data.train <- subset(water.ecoli, split.labels == T)
+data.test <- subset(water.ecoli, split.labels == F)
+```
+
+**The model generation and evaluation process is the same for each of the models, so the full code is shown only for model1, and only the results are shown for the following models. At the very end of this file is a summary table that compares significant aspects of each model.**
+
+## model0 (Baseline Model)
+
+This baseline model uses the [Zero Rule Algorithm](https://machinelearningmastery.com/implement-baseline-machine-learning-algorithms-scratch-python/), which predicts the class value that is most common in the training set. That means that if there are 90 TRUE and 10 FALSE observations, the Zero Rule Algorithm baseline model assumes that all of the observations are TRUE, and this model would have a 90% accuracy rate. 
+
+Below is a table of whether the E. coli concentration is below the safety threshold of 900 cf/100ml.
+
+```{r echo = F}
+summary(data.train$E.coli.C.MF.conform)
+```
+
+Because the number of TRUE is greater than the number of FALSE, this baseline model assumes that all observations are assumed to be TRUE, or have an e. coli concentration below the safety threshold. To test the out-of-sample accuracy, the testing dataset can be used to evaluate the assumption.
+
+Below is a confusion matrix, a table of whether the E. coli concentration actually conforms to the safety threshold or not.
+
+```{r echo = F, eval = F}
+summary(data.test$E.coli.C.MF.conform)
+```
+
+.               |FALSE (Predicted)|TRUE(Predicted)
+----------------|-----------------|-----------------
+FALSE (Actual)  |0                |8360
+TRUE  (Actual)  |0                |30366
+
+The accuracy of this model is the total number of correct predictions divided by the total number of predictions, which in this case is:
+
+<center>
+$Accuracy = \frac{30366}{30366 + 8360} = 0.784$
+</center>
+
+Though this could be seen as a decent accuracy rate, the false positive rate is also very high, which is the rate at which a water sample is predicted to have safe e. coli levels when in fact they dont. The false positive rate can be calculated by dividing the rate of false positive by the total number of observations that actually have a value FALSE. In this case it is:
+
+<center>
+$False Positive Rate = \frac{8360}{0 + 8360} = 1$
+</center>
+
+So although the accuracy is decent, the false positive rate is far too high. This represents a public safety health risk, because 21.6% of people who go swimming will be exposed to high levels of e. coli. Though the goal of developing a model includes increasing the accuracy of the model, the primary goal for this project is actually to minimize the false positive rate, even if it means costing accuracy. The following models aim to strike a good balance between high accuracy and a low false positive rate. Additional metrics are included in the evaluation of the models and will be explained in the process.
+
+```{r echo = F}
+testsize0 <- 30366 + 8360
+AUC0 <- 0
+sensitivity0 <- 30366/(30366 + 0) # TP/(TP + FN)
+falsepositive0 <- 8360/(8360 + 0)
+f1score0 <-  2*30366/(2*30366 + 8360 + 0) # 2*TP/(2*TP + FP + FN)
+accuracy0 <- 30366/(30366+8360) # (TP + TN)/total
+```
+
+## model1 [SALinsitu.ppt + Oxygen.Diss.mg.l]
+
+This is a simple model, created with as few variables as possible that also creates a model that has a reasonable accuracy. The number of variables used in this model is limited to 1) avoid overfitting and 2) keep as many data points as possible. What's unique about this data set is that many rows have missing values for several testing results. Each row has NAs in different positions. The glm() modeling function only includes an observation as a data point if there are no missing values in any of the tests included in the model for that observation. By increasing the number of variables included in the model, the likelyhood of having a missing value in a row also increases, thereby decreasing the number of observations that the model can use as a valid test point. By selecting only fewer variables, the sample size is kept as large as possible, improving the statistical significance of the results.
+
+To be able to compare the raw data set and the prediction, they need to be the same length. Since the function glm() excludes rows that have NA in any of the specified variables, the raw data needes to be filtered to only rows that have no missing values in any of the specified variables. The model can then be generated using the glm() function. 
+
+```{r echo = F}
+data.train1 <- filter(data.train, is.na(data.train$SALinsitu.ppt) == F & is.na(data.train$Oxygen.Diss.mg.l) == F)
+model1 <- glm(E.coli.C.MF.conform ~ SALinsitu.ppt + Oxygen.Diss.mg.l, data = data.train1, family = "binomial")
+summary(model1)
+```
+The number of asterisks at the end of a row for a variable indicates its significance in the model; three consecutive asterisks indicates high importance, while one or no asterisks indicates low importance. The summary of this model shown above indicates that SALinsitu.ppt, with three asterisks, has high importance to the model, and Oxygen.Diss.mg.l, with two,  has some significance.
+ 
+### ROC curve
+
+To evaluate the effectiveness of the model, an ROC curve can be used. This shows how by varying the threshold level, it's possible to vary the amount of false po sitives and false negatives the model scores when tested on a test data set. The package ROCR is used to not only generate the ROC curve, but also to retrieve the area under the curve (AUC), which is also a metric used to evalute the effectiveness of the model. The closer the area under the curve is to 1, the better, and the lower the value, the less effective. This result is saved to be compared to the AUC values of other models to be created.
+```{r warning = F, echo = F}
+# predict() can't be used if there are NAs included, so rows with NA in either SALinsitu.ppt or Oxygen.Diss.mg.l need to be filtered out. To test the out-of-sample performance of this model, predict() is used on the data.test, which was not used to create the model. 
+data.test1 <- filter(data.test, is.na(data.test$SALinsitu.ppt) == F & is.na(data.test$Oxygen.Diss.mg.l) == F)
+# predict() can now be used. 
+testsize1 <- nrow(data.test1)
+train.predict1 <- predict(model1, type = "response", newdata = data.test1)
+
+ROCR.pred1 <- prediction(train.predict1, data.test1$E.coli.C.MF.conform)
+ROCR.perf1 <- performance(ROCR.pred1, "tpr", "fpr")
+plot(ROCR.perf1, colorize = TRUE, print.cutoffs.at = seq(0, 1, 0.1), text.adj = c(-0.2, 1.7))
+
+# ROC area under curve
+AUC1 <- performance(ROCR.pred1, "auc")
+AUC1 <- as.numeric(AUC1@y.values)
+AUC1
+```
+
+This plot makes it apparent that the false positive rate, which is the metric that is to be minimized, takes a sharp turn to increase between t = 0.7 and t = 0.6. The threshold for this model is set to be 0.7, and the resulting confusion matrix is shown below.
+
+### Confusion Matrix
+
+A confusion matrix is a way to organize a model's results of testing with a test data set. The model's predicted outcomes of whether an observation will have an e. coli concentration above or below the safety level of 900 units per 100ml is not always going to correct. Across the x-axis is the model's predicted outcome, and down the y-axis is the dataset's actual value for e. coli conformance. By manipulating these results, a set of useful metrics can be derived for evaluating the effectiveness of the model. For this project, the metrics of interest are sensitivity, the false positive rate, and accuracy. 
+```{r echo = F}
+# Confusion matrix with t = 0.7
+confusionmatrix1<- table(data.test1$E.coli.C.MF.conform, train.predict1 > 0.7)
+confusionmatrix1
+sensitivity1 <- confusionmatrix1[2,2]/(confusionmatrix1[2,2] + confusionmatrix1[2,1])
+accuracy1 <- (confusionmatrix1[1,1] + confusionmatrix1[2,2])/sum(confusionmatrix1)
+falsepositive1 <- confusionmatrix1[1,2]/(confusionmatrix1[1,2] + confusionmatrix1[1,1])
+sensitivity1
+accuracy1
+falsepositive1
+```
+
+### F1-score
+
+An additional metric that can be derived from the confusion matrix is the F1-score. This is the harmonic mean of the precision and recall. The closer this value is to 1, the better the model. 
+
+```{r echo = F}
+# F1-score = 2/(1/recall + 1/precision)
+# precision = TP/(TP + FP)
+# recall = TP/(TP + FN)
+
+precision1 <- confusionmatrix1[2,2]/(confusionmatrix1[2,2] + confusionmatrix1[2,1])
+recall1 <- confusionmatrix1[2,2]/(confusionmatrix1[2,2] + confusionmatrix1[1,2])
+f1score1 <- 2/(1/recall1 + 1/precision1)
+f1score1
+```
+
+## model2 [SALinsitu.ppt + Oxygen.Diss.mg.l*season]
+
+### Creating model2
+```{r echo = F}
+data.train2 <- filter(data.train, is.na(data.train$SALinsitu.ppt) == F & is.na(data.train$Oxygen.Diss.mg.l) == F)
+
+model2 <- glm(E.coli.C.MF.conform ~ SALinsitu.ppt + Oxygen.Diss.mg.l*season, data = data.train2, family = "binomial")
+summary(model2)
+```
+In this model, the two asterisks that were assigned to Oxygen.Diss.mg.l in model1 are no longer here in model2. Additionally, none of the seasons are assigned any asterisks. This suggests that adding seasons to the model didn't contribute to improving the model's performance. This is supported by the fact that the AIC has increased from model1 to model2, from to 194.62 to 202.93 (an increase in AIC is a warning of over-fitting).
+
+### ROC curve
+
+```{r warning = F, echo = F}
+data.test2 <- filter(data.test, is.na(data.test$SALinsitu.ppt) == F & is.na(data.test$Oxygen.Diss.mg.l) == F & is.na(data.test$season) == F)
+testsize2 <- nrow(data.test2)
+train.predict2 <- predict(model2, type = "response", newdata = data.test2)
+
+ROCR.pred2 <- prediction(train.predict2, data.test2$E.coli.C.MF.conform)
+ROCR.perf2 <- performance(ROCR.pred2, "tpr", "fpr")
+plot(ROCR.perf2, colorize = TRUE, print.cutoffs.at = seq(0, 1, 0.1), text.adj
+     = c(-0.2, 1.7))
+
+AUC2 <- performance(ROCR.pred2, "auc")
+AUC2 <- as.numeric(AUC2@y.values)
+```
+This ROC curve shows that this model also exhibits a sharp increase in false positive rate around t = 0.7 and t = 0.6. Again, because keeping a low false positive rate is the priority, the confusion matrix below is generate using t = 0.7 because it has a lower false positive rate than t = 0.6.
+
+### Confusion Matrix
+
+```{r echo = F}
+confusionmatrix2<- table(data.test2$E.coli.C.MF.conform, train.predict2 > 0.7)
+confusionmatrix2
+sensitivity2 <- confusionmatrix2[2,2]/(confusionmatrix2[2,2] + confusionmatrix2[2,1])
+accuracy2 <- (confusionmatrix2[1,1] + confusionmatrix2[2,2])/sum(confusionmatrix2)
+
+precision2 <- confusionmatrix2[2,2]/(confusionmatrix2[2,2] + confusionmatrix2[2,1])
+recall2 <- confusionmatrix2[2,2]/(confusionmatrix2[2,2] + confusionmatrix2[1,2])
+f1score2 <- 2/(1/recall2 + 1/precision2)
+falsepositive2 <- confusionmatrix2[1,2]/(confusionmatrix2[1,2] + confusionmatrix2[1,1])
+```
+This confusion matrix is exactly identical to that of model1, meaning that all parameters derived from the confusion matrix are identical. This includes accuracy, f1-score, false positive rate, and sensitivity. Because there is no observed difference between the two models, model1 is preferred to model2 because it has fewer variables.
+
+## model3 [SALinsitu.ppt + Oxygen.Diss.mg.l + pH.ecolirange + temp.ecolirange]
+
+### Creating model3
+```{r echo = F}
+data.train3 <- filter(data.train, is.na(data.train$SALinsitu.ppt) == F & is.na(data.train$Oxygen.Diss.mg.l) == F & is.na(data.train$pH.ecolirange) == F & is.na(data.train$temp.ecolirange) == F)
+
+model3 <- glm(E.coli.C.MF.conform ~ SALinsitu.ppt + Oxygen.Diss.mg.l + pH.ecolirange + temp.ecolirange, data = data.train3, family = "binomial")
+summary(model3)
+```
+Going back to the base of model2, the two additional engineered features of pH.ecolirange and temp.ecolirange are tested here in model 3. Similar to model1, SALinsitu.ppt and Oxygen.Diss.mg.l are assigned 3 and 2 asterisks, respectively, while both of the two engineered features have none. This indicates that the two new variables don't improve the effectiveness of the model. 
+
+### ROC curve
+
+```{r warning = F, echo = F}
+data.test3 <- filter(data.test, is.na(data.test$SALinsitu.ppt) == F & is.na(data.test$Oxygen.Diss.mg.l) == F & is.na(data.test$pH.ecolirange) == F & is.na(data.test$temp.ecolirange) == F)
+testsize3 <- nrow(data.test3)
+train.predict3 <- predict(model3, type = "response", newdata = data.test3)
+
+ROCR.pred3 <- prediction(train.predict3, data.test3$E.coli.C.MF.conform)
+ROCR.perf3 <- performance(ROCR.pred3, "tpr", "fpr")
+plot(ROCR.perf3, colorize = TRUE, print.cutoffs.at = seq(0, 1, 0.1), text.adj
+     = c(-0.2, 1.7))
+
+AUC3 <- performance(ROCR.pred3, "auc")
+AUC3 <- as.numeric(AUC3@y.values)
+```
+What's noticeable about this ROC curve is that there isn't as sharp of a turn around t = 0.7 and t = 0.6. Rather, the curve is smoother, showing that the false positive rate increases sooner with decreasing threshold value. 
+
+One metric that shows the weakness of this model is Area under Curve (or AUC). This is the area under the curve of the ROC curve. This indicates that there isn't a good way to balance the true positive rate and the false positive rate. The AUC of this test is 0.74, which is far from the ideal model (which would have an AUC of 1) and far lower than the AUC values of model1 and model2 (which are 0.81 and 0.83 respectively), so it suggests that this model isn't as effective. To have more more certainty in this conclusion, additional metrics derived from the confusion are compared.
+
+### Confusion Matrix
+
+```{r echo = F}
+confusionmatrix3<- table(data.test3$E.coli.C.MF.conform, train.predict3 > 0.7)
+confusionmatrix3
+sensitivity3 <- confusionmatrix3[2,2]/(confusionmatrix3[2,2] + confusionmatrix3[2,1])
+accuracy3 <- (confusionmatrix3[1,1] + confusionmatrix3[2,2])/sum(confusionmatrix3)
+
+precision3 <- confusionmatrix3[2,2]/(confusionmatrix3[2,2] + confusionmatrix3[2,1])
+recall3 <- confusionmatrix3[2,2]/(confusionmatrix3[2,2] + confusionmatrix3[1,2])
+f1score3 <- 2/(1/recall3 + 1/precision3)
+falsepositive3 <- confusionmatrix3[1,2]/(confusionmatrix3[1,2] + confusionmatrix3[1,1])
+```
+
+The first thing to notice about this confusion matrix is that, unlike the confusion matrices of other models, the number of true positives (32) is greater than the number of false negatives (40). Going through the calculations, this means that the sensitivity, accuracy, and f1-score will necessarily be lower than that of model1 and model2. Additinoally, because there's two false positives instead of the usual one false positive in the other models, the false positive rate will be roughly doubled. Given that keeping the false positive rate at a minimum for this project is a priority, this model suboptimal. 
+
+## model4 [SALinsitu.ppt]
+
+At this point, it's clear that model2 is better than model2, which adds the season variable, and model3, which accounts for pH and water temperature, given that adding seasons make negligible impact on the model and adding pH and water temperature make the model damage accuracy. However, model2 still needs to be tested for whether it can simplified further. In model4, the higher importance variable, SALinsitu.ppt, is kept, while the lower importance variable, Oxygen.Diss.mg.l, is excluded. 
+
+### Creating model4
+```{r echo = F}
+data.train4 <- filter(data.train, is.na(data.train$SALinsitu.ppt) == F)
+model4 <- glm(E.coli.C.MF.conform ~ SALinsitu.ppt, data = data.train4, family = "binomial")
+summary(model4)
+```
+
+As expected, while Oxygen.Diss.mg.l is removed, SALinsitu.ppt remains the main predictor variable of whether e. coli concentraiton conform to safety levels, as signified by the three asterisks that are assigned to SALinsitu.ppu in the mode summary above.
+
+### ROC curve
+
+```{r warning = F, echo = F}
+data.test4 <- filter(data.test, is.na(data.test$SALinsitu.ppt) == F)
+testsize4 <- nrow(data.test4)
+train.predict4 <- predict(model4, type = "response", newdata = data.test4)
+
+ROCR.pred4 <- prediction(train.predict4, data.test4$E.coli.C.MF.conform)
+ROCR.perf4 <- performance(ROCR.pred4, "tpr", "fpr")
+plot(ROCR.perf4, colorize = TRUE, print.cutoffs.at = seq(0, 1, 0.1), text.adj
+     = c(-0.2, 1.7))
+
+AUC4 <- performance(ROCR.pred4, "auc")
+AUC4 <- as.numeric(AUC4@y.values)
+```
+
+An immediate observation that can be made of this ROC curve is that the points corresponding to t = 0.9 through t = 0.5 are all very close together. By decreasing t = 0.5 to t = 0.4, a masssive increase in false positive rate occurs. Selecting a value of t between 0.9 and 1 likewise drastically decreases the true positive rate. In order to avoid the mistakes of decreasing accuracy too much and of increasing false positive rate too much, a threshold value will need to be selected between t = 0.5 and t = 0.9. Because t = 0.9 corresponds to the loweset false positive rate, that is selected as the threshold value for generating the confusion matrix below.
+
+### Confusion Matrix
+
+A threshold value of t = 0.9 is used instead of t = 0.7, as has been done for previous models, because in this ROC curve, that value corresponds to a point on the plot that is closer to the upper left hand corner. This yields the following confusion matrix.
+
+```{r echo = F}
+confusionmatrix4<- table(data.test4$E.coli.C.MF.conform, train.predict4 > 0.9)
+confusionmatrix4
+sensitivity4 <- confusionmatrix4[2,2]/(confusionmatrix4[2,2] + confusionmatrix4[2,1])
+accuracy4 <- (confusionmatrix4[1,1] + confusionmatrix4[2,2])/sum(confusionmatrix4)
+
+# precision = TP/(TP + FP)
+precision4 <- confusionmatrix4[2,2]/(confusionmatrix4[2,2] + confusionmatrix4[2,1])
+recall4 <- confusionmatrix4[2,2]/(confusionmatrix4[2,2] + confusionmatrix4[1,2])
+f1score4 <- 2/(1/recall4 + 1/precision4)
+falsepositive4 <- confusionmatrix4[1,2]/(confusionmatrix4[1,2] + confusionmatrix4[1,1])
+```
+
+At first glance, this confusion matrix can look like it presents the best results, with a much higher accuracy of 92% and f1-score of 95%; however, the false positive rate is also much higher in this model, 13%. Given that this is 13 times higher than the false positive rate of model1 of 1%, this model is not usable as a system for warning beach goers of high e.coli levels.
+
+# Results
+
+## Summary of Models
+
+The models are listed below with the variables used in brackets. 
+
+* model0 = Baseline Model
+* model1 = [SALinsitu.ppt + Oxygen.Diss.mg.l]
+* model2 = [SALinsitu.ppt + Oxygen.Diss.mg.l*season]
+* model3 = [SALinsitu.ppt + Oxygen.Diss.mg.l + pH.ecolirange + temp.ecolirange]
+* model4 = [SALinsitu.ppt]
+
+The metrics used to compare the models are tabulated below: 
+```{r echo = F}
+parameter <- c("test size", "AUC of ROC", "sensitivity", "falsepositive", "f1score", "accuracy")
+modelresults0 <- c(testsize0, AUC0, sensitivity0, falsepositive0, f1score0, accuracy0)
+modelresults1 <- c(testsize1, AUC1, sensitivity1, falsepositive1, f1score1, accuracy1)
+modelresults2 <- c(testsize2, AUC2, sensitivity2, falsepositive2, f1score2, accuracy2)
+modelresults3 <- c(testsize3, AUC3, sensitivity3, falsepositive3, f1score3, accuracy3)
+modelresults4 <- c(testsize4, AUC4, sensitivity4, falsepositive4, f1score4, accuracy4)
+comparison <- as.data.frame(rbind(modelresults0, modelresults1, modelresults2, modelresults3, modelresults4))
+colnames(comparison) <- parameter
+rownames(comparison) <- c("model0", "model1", "model2", "model3", "model4")
+comparison
+```
+
+The metrics used are descsribed below: 
+
+* **Test Size** - Ensures that the sample size is large enough to get statistically significant results.
+
+* **False Positive Rate** = $\frac{FP}{TN + FP}$: This is the rate at which a water sample is incorrectly classified as safe. It's important for this value to be as low as possible, in order to minimize how often people are exposed to unsafe levels of e. coli. Also called fall-out rate, and is equal to 1 - true negative rate (aka specificity)
+
+* **Sensitivity** = $\frac{TP}{TP + FN}$ : This a metric to show how often people will be unecessarily be kept away from water. The closer this number is to 1, the less often people will be unnecessarily be kept away from water. This value is important to maximize, but not as importrant as minimizing the false positive rate.
+
+* **Accuracy** = $\frac{TP + TN}{TP + TN + FP + FN}$: This takes into account all results and expresses how often the model is correct. 
+
+* **f1 score** = $\frac{2*TP}{2*TP + FP + FN}$, or the harmonic mean of precision and sensitivity (aka recall). Compared to accuracy, it doesn't account for true negative results, but has greater weight on true positive results.
+
+Each of the models are evaluated based on these metrics, by which **model1** is chosen.
+
+* **model0** - Simple baseline model, which assumes the zero-rule algorithm. Other models are compared to this one.
+
+* **model1** - This model has a similar accuracy compared to model0, but has a significantly lower false positive rate, which is very important. This model is the most effective out of those tested in this project.
+
+* **model2** - This has the exact same results as model1; however, the higher AIC value of model2 suggests overfitting. Given that the results are the same anyway, season is not a variable necessary to predict e. coli levels.
+
+* **model3** - Accruacy, f1-score, and sensitivity all dropped significantly, meaning that areas will be declared unsafe more often than necessary... in the long run, this could possibly lead to people disregarding the warnings and swimming in risky water because they think it's not very likely to have high e. coli. 
+
+* **model4** - Much higher accuracy, but at the cost of an unacceptably high false positive rate of 13%. Model4 isn't the best because public safety is paramount for this project.
+
+# Conclusion
+
+Ultimately, the optimal model tested was model1, which combines the variables of salinity and dissolved oxygen to predict whether a water sample will have an e. coli concentration above the safety limit of 900 no/100ml with an accuray of 78% and a minimal false positive rate of 1.0%. With only the salinity and the dissolved oxygen, which are both easily tested phsyical properties, results can come in far sooner than results can come in from a biological test for the concentration of e. coli, which requires roughly 24 hours for bacteria to grow and multiply. This model can be used by the UK to responably predict when different bodies of water will have e. coli concentrations above safety levels, giving them a chance to warm would-be swimmers of the dangers, thereby acting as a preventative measure against e. coli infection.
+
+## Assumptions and Limitations
+
+* The biggest limitation of this project was that not all tests were performed on each sample, limiting the number of samples that had all variables of interest tested. This led to a drastic decrease in the sample size, from an original ### observations down to only ### observations that had the variables in the model tested. 
+* One of the assumptions made in this project was that the variables that had the greatest impact on e. coli concentration was amongst the most commonly tested determinands. Due to the sheer size of this data set, only a limited number of variables could be tested for correlations to e. coli concentration. The more common determinands were selected preferentially for testing because 
+* One objective of this projects is to make it easier to predict high e. coli concentrations in bodies of water, and to be able to do that with tests that are easy to perform would be a big advantage. A assumption made in selecting the most common determinands is that the tests performed more frequently would likely be easier to perform. Given that high e. coli concentration can be predicted with decent accuracy with just two simple chemical tests, this is shown to be a viable assumption. 
+
+## Recommendations for Future work
+
+* Going forward, a way that this model can be improved upon is by testing salinity and dissolved oxygen for all samples tested. This would drastically increase the sample size and the statistical reliability of the model. 
+* This model has been somewhat successful with the water quality data of the United Kingdom, but this same process of data munging, exploratory analysis, and machine learning can be applied to any locations water sources. An interesting area of study could be whether salinity, dissolved oxygen, and season are also the predictor variables for e. coli concentration in other locations across the world.
+

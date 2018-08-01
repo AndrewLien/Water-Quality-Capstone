@@ -1,0 +1,210 @@
+---
+title: "2-exploratory-analysis-3"
+author: "Andrew Lien"
+date: "June 20, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r echo = F, message = F, include = F}
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(magrittr)
+library(RColorBrewer)
+library(scales)
+library(binr)
+water.ecoli <- read.csv("water.ecoli.csv", stringsAsFactors = F)
+water.ecoli$materialtype %<>% as.factor()
+water.ecoli$time %<>% as.POSIXct(format = "%Y-%m-%dT%H:%M:%S")
+```
+
+# OVERVIEW
+
+1. Collinearity
+  a. Correlation Matrix
+  b. Investigating Correlated Variables
+  c. Removing Correlated Variables
+2. Testing Frequencies
+3. Investigating Relationships to E. Coli
+4. Investigating Relationships to Location
+5. Investigating Relationships to Time
+
+# 1. COLLINEARITY
+
+## a. Correlation Matrix
+
+Having the correlation matrix converted to a heatmap makes it easier to see that some pairs of variables are highly correlated (either very white or very black).
+
+```{r echo = F, warning = F}
+cor.table <- cor(water.ecoli[,5:length(water.ecoli)], use = "pairwise.complete.obs")
+cor.table <- as.data.frame(cbind(rownames(cor.table), cor.table))
+cor.table <- gather(cor.table, key = "V2", value = "cor.value", 2:length(cor.table))
+cor.table$cor.value %<>% as.numeric()
+ggplot(cor.table, aes(x = V1, y = V2)) +
+  geom_tile(aes(fill = cor.value), color = "white") +
+  scale_fill_gradient(low = "white", high = "black") +
+  ggtitle("Correlation Heat Map") +
+  xlab("Determinand1") +
+  ylab("Determinand2") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+## b. Investigating Correlated Variables
+
+### Oxygen.Diss.mg.l and O.Diss..sat..
+
+Both of these determinands are different measurement methods for the same physical property, so it makes sense that they are strongly correlated. Only One needs to be kept.
+
+```{r echo = F, warning = F}
+ggplot(water.ecoli, aes(x = Oxygen.Diss.mg.l, y = O.Diss..sat.., color = E.coli.C.MF.conform)) +
+  geom_point(alpha = 0.2) +
+  facet_wrap(~materialtype, scales = "free")
+```
+
+### Oxygen.Diss.mg.l and Temp.Water.cel
+
+This negative correlation makes sense, because the solubility of gas in liquid is known to decrease as the temperature of the liquid increases. 
+
+```{r echo = F, warning = F}
+ggplot(water.ecoli, aes(x = Temp.Water.cel, y = Oxygen.Diss.mg.l, color = E.coli.C.MF.conform)) +
+  geom_point(alpha = 0.2) +
+  facet_wrap(~materialtype, scales = "free")
+```
+
+### SALinsitu.ppt and Cu.Filtered.ug.l
+ 
+Salinity is the measure of the amount of dissolved salts. The positive correlation between copper concentration and salinity in estuarine water suggests that copper might be one of the main salt constituents in estuarine water. However, due to the low sample size of points relating copper and salinity, this correlation isn't reliable.
+
+```{r echo = F, warning = F}
+ggplot(water.ecoli, aes(x = SALinsitu.ppt, y = Cu.Filtered.ug.l, color = E.coli.C.MF.conform)) +
+  geom_point(alpha = 0.5) +
+  facet_wrap(~materialtype, scales = "free")
+```
+
+## c. Removing Correlated Variables
+
+```{r}
+water.ecoli$O.Diss..sat.. <- NULL
+```
+
+# 2. Testing Frequencies
+
+Each of the determinands are tested with different frequencies based on material type. This is visualized below to better understand the differences between each material type.
+
+Note to self: This plot still needs to be fixed to 1) show bars in order of largest to smallest... will get back to it later.
+
+```{r echo = F, message = F, warning = F}
+frequencytable <- aggregate(x = is.na(select(water.ecoli, c(5:18))) == F, by = select(water.ecoli, 2), FUN = sum)
+frequencytable <- t(frequencytable)
+colnames(frequencytable) <- frequencytable[1,]
+frequencytable <- as.data.frame(frequencytable[-1,])
+frequencytable <- cbind(rownames(frequencytable), frequencytable)
+colnames(frequencytable)[1] <- "determinand"
+frequencytable <- gather(frequencytable, key = "materialtype", value = "count", 2:5)
+frequencytable$materialtype %<>% as.factor()
+frequencytable$count %<>% as.numeric()
+
+ggplot(frequencytable, aes(x = materialtype, y = count, fill = determinand)) + 
+  geom_bar(position = "fill", stat = "identity") +
+  scale_fill_manual(values = colorRampPalette(brewer.pal(9, "Set1"))(length(unique(frequencytable$determinand)))) +
+  scale_y_continuous(label = percent) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+# 3. Investigating Relationships to E. Coli
+Instead of comparing the relationship between the magnitude of e. coli or pH, it should be the frequency of e. coli < 900 per region of T or pH.
+
+## Water Temperature, pH, and Dissolved Oxygen
+Plotting each of these variables against the count of observations that have e. coli concentrations above or below regulatory levels shows that each interval has different ratios of conformance to nonconformance, indicating that these variables have some impact on e. coli growth; however, these plots also reveal that there are fewer testing points at high and low values of each of these variables, making any logistical regression model based on these TRUE/FALSE frequencies less reliable at those regions.
+```{r echo = F, warning = F}
+# Water Temperature
+water.ecoli.Temp <- select(filter(water.ecoli, is.na(water.ecoli$Temp.Water.cel) == 0), c(1:4, "E.coli.C.MF.no.100ml", "Temp.Water.cel", "E.coli.C.MF.conform"))
+water.ecoli.Temp <- cbind(water.ecoli.Temp, cut(water.ecoli.Temp$Temp.Water.cel, 30))
+colnames(water.ecoli.Temp)[8] <- "bin"
+ggplot(water.ecoli.Temp, aes(x = bin)) +
+  geom_bar(aes(fill = factor(E.coli.C.MF.conform)), width = 0.9, stat = "count", position = "dodge") +
+  scale_color_discrete(name = "conforms", breaks = c(T, F), labels = c("True", "False")) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  facet_wrap(~ materialtype, scales = "free") +
+  ggtitle("E. Coli Conformance count and Water Temperature")
+
+# pH
+water.ecoli.pH <- select(filter(water.ecoli, is.na(water.ecoli$pH.phunits) == 0), c(1:4, "E.coli.C.MF.no.100ml", "pH.phunits", "E.coli.C.MF.conform"))
+water.ecoli.pH <- cbind(water.ecoli.pH, cut(water.ecoli.pH$pH.phunits, 30))
+colnames(water.ecoli.pH)[8] <- "bin"
+ggplot(water.ecoli.pH, aes(x = bin)) +
+  geom_bar(aes(fill = factor(E.coli.C.MF.conform)), width = 0.9, stat = "count", position = "dodge") +
+  scale_color_discrete(name = "conforms", breaks = c(T, F), labels = c("True", "False")) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  facet_wrap(~ materialtype, scales = "free") +
+  ggtitle("E. Coli Conformance count and pH")
+
+# Dissolved Oxygen
+water.ecoli.oxygen.diss <- select(filter(water.ecoli, is.na(water.ecoli$Oxygen.Diss.mg.l) == 0), c(1:4, "E.coli.C.MF.no.100ml", "Oxygen.Diss.mg.l", "E.coli.C.MF.conform"))
+water.ecoli.oxygen.diss <- cbind(water.ecoli.oxygen.diss, cut(water.ecoli.oxygen.diss$Oxygen.Diss.mg.l, 30))
+colnames(water.ecoli.oxygen.diss)[8] <- "bin"
+ggplot(water.ecoli.oxygen.diss, aes(x = bin)) +
+  geom_bar(aes(fill = factor(E.coli.C.MF.conform)), width = 0.9, stat = "count", position = "dodge") +
+  scale_color_discrete(name = "conforms", breaks = c(T, F), labels = c("True", "False")) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  facet_wrap(~ materialtype, scales = "free") +
+  ggtitle("E. Coli Conformance count and Dissolved Oxygen")
+```
+
+```{r eval = F, echo = F}
+# These variables seemed to have little to no relationship with e. coli and will not be used to predict e. coli.
+ggplot(water.ecoli, aes(x = BOD.ATU.mg.l, y = E.coli.C.MF.no.100ml, color = E.coli.C.MF.conform)) +
+  geom_point(alpha = 0.2) +
+  facet_wrap(~materialtype, scale = "free")
+ggplot(water.ecoli, aes(x = Cu.Filtered.ug.l, y = E.coli.C.MF.no.100ml, color = E.coli.C.MF.conform)) +
+  geom_point(alpha = 0.2) +
+  facet_wrap(~materialtype, scale = "free")
+ggplot(water.ecoli, aes(x = Ni..Filtered.ug.l, y = E.coli.C.MF.no.100ml, color = E.coli.C.MF.conform)) +
+  geom_point(alpha = 0.2) +
+  facet_wrap(~materialtype, scale = "free")
+ggplot(water.ecoli, aes(x = Nitrate.N.mg.l, y = E.coli.C.MF.no.100ml, color = E.coli.C.MF.conform)) +
+  geom_point(alpha = 0.2) +
+  facet_wrap(~materialtype, scale = "free")
+ggplot(water.ecoli, aes(x = Orthophospht.mg.l, y = E.coli.C.MF.no.100ml, color = E.coli.C.MF.conform)) +
+  geom_point(alpha = 0.2) +
+  facet_wrap(~materialtype, scale = "free")
+ggplot(water.ecoli, aes(x = SALinsitu.ppt, y = E.coli.C.MF.no.100ml, color = E.coli.C.MF.conform)) +
+  geom_point(alpha = 0.2) +
+  facet_wrap(~materialtype, scale = "free")
+# Salinity... checking to see how the distribution breaks down between conform/non-conform.
+water.ecoli.sal <- select(filter(water.ecoli, is.na(water.ecoli$SALinsitu.ppt) == 0), c(1:4, "E.coli.C.MF.no.100ml", "SALinsitu.ppt", "E.coli.C.MF.conform"))
+water.ecoli.sal <- cbind(water.ecoli.sal, cut(water.ecoli.sal$SALinsitu.ppt, 30))
+colnames(water.ecoli.sal)[8] <- "bin"
+ggplot(water.ecoli.sal, aes(x = bin)) +
+  geom_bar(aes(fill = factor(E.coli.C.MF.conform)), width = 0.9, stat = "count", position = "dodge") +
+  scale_color_discrete(name = "conforms", breaks = c(T, F), labels = c("True", "False")) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  facet_wrap(~ materialtype, scales = "free") +
+  ggtitle("E. Coli Conformance count and Salinity")
+```
+
+# 4. Investigating Relationships to Location
+
+As expected, most pond/river sampling locations are farther inland and all seawater samples are taken along the coast of the UK.
+
+```{r echo = F, warning = F}
+ggplot(water.ecoli, aes(x = easting, y = northing, color = materialtype)) +
+  geom_point(alpha = 0.2)
+```
+
+# 5. Investigating Relationships to Time
+The objective is to show multiple variables plotted against time on the same graph. Due to different scaling of each of these variables, it might be better to plot these each as a facet of the same plot; however, this is no different from multiple separate plots. 
+```{r echo = F, warning = F}
+# Time and Water T
+ggplot(water.ecoli, aes(x = time, y = Temp.Water.cel, color = E.coli.C.MF.conform)) +
+  geom_point(alpha = 0.2)
+# BOD ATU
+ggplot(water.ecoli, aes(x = time, y = BOD.ATU.mg.l, color = E.coli.C.MF.conform)) +
+  geom_point(alpha = 0.2)
+```
+
+-
