@@ -25,7 +25,7 @@ The objective of this project is to develop a model that can predict, based on d
 # Project Files
 
 - "water.ecoli.csv": the filtered and tidied dataset
-- "2013.csv", "2014.csv", "2015.csv", "2016.csv", "2017.csv", and "water.raw.csv": these raw files are too large to be uploaded on github and are stored in a google drive folder at the following location: ____________
+- "water.raw.csv": this is too large to upload on github and is stored in a [google drive folder](https://drive.google.com/drive/folders/1CD8-oHrF6VQyjEdSL8v6PSWbstwB0T08).
 - "0.combining-annual-data.R": combines each individual year's data into one file, "water.raw.csv".
 - "1-filtering-and-tidying.Rmd" 
 - "2-exploratory-analysis.Rmd"
