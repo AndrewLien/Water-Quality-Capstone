@@ -1,4 +1,4 @@
-# Water-Treatment-Capstone
+# E. Coli Prediction in UK Water Quality Data
 
 ## Background
 
