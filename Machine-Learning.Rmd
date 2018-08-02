@@ -1,0 +1,29 @@
+---
+title: "Machine Learning"
+author: "Andrew Lien"
+date: "August 2, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+After exploring the data, it's become more apparent that a logistical regression model would be the most suitable for the problem. The alternative route was to go with a linear regression that can predict the exact concentration of e. coli in a water sample given certain variables; however, because the concentration of e. coli is only of interest in so far as whether it's above a safe level, this problem was converted to a classification problem. The group is divided into two groups, whether the  e. coli concentration of the water sample was above 900 cfu/100ml (an unsafe concentration to swim in, as defined by the [UK Environmental Agency](https://environment.data.gov.uk/bwq/profiles/help-understanding-data.html)) or below 900 cfu/100ml. Different variables selected from the exploratory analysis were combined to create a logistical regression model.
+
+The main variables and features that will be used are those that exhibited a correlation to e. coli in water. This includes the following: 
+
+- "SALinsitu.ppt": This is the saltiness of the water.
+- "Oxygen.Diss.mg.l": This is the concetration of oxygen that is dissolved in the water.
+- "time": This is the time point at which the sapmle was taken.
+- "pH.phunits": This is the pH of the water sample, a measure of its acidity or basicity.
+- "Temp.Water.cel": This is a measure of the temperature of the water, in Celcius.
+
+Three of these variables were engineered to create new features:
+
+- "seasons": This was derived from "time". Because water temperature exhibited a seasonal correlation to time and water temperature is correlated to the concentration of oxygen that can be dissolved in water, this was included in the model in the place of "time".
+- "pH.ecolirange": This was derived from "pH.phunits". It was observed in exploratory analysis that the majority of high e. coli occurences were near the mean of the pH of water samples. This variable is a classification of whether a value is within two standard deviations of the mean.
+- "temp.ecolirange": This was derived from "Temp.Water.cel". Similarly to pH, it was observed that the majority of high e. coli measurements occured near the center of the group. However, this was a negatively-shifted normal distribution, so to counterbalance that, the median was selected instead of the maen as the midpoint to minimize any distorting effects of the tail. This was a classification of whether a value was within two standard deviations of the median.
+
+The function glm() was used to create a logistical regression model of these variables. Several models are created with different combinations of these variables to identify the best combination. Each model was summarized to identify which variables were the most significant. Additionally, and ROC curve was used to establish a good threshold value that would get the desired results. Several comparison metrics were used that were derived from each model's confusion matrix including accuracy, false positive rate, sensitivity, and f1-score. In this project, the main metrics of interest were false positive rate (to ensure that no would-be swimmers would be exposed to high e. coli concentrations) and accuracy (to quantify how often this model would be correct). The false positive rate had to be minimized while keeping the accuracy as high as possible in order to select the optimal model. The results for this machine learning exercise are included in the final report for this capstone project.
+
